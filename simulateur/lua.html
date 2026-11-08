@@ -1,0 +1,236 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Simulateur Nspire Lua</title>
+<style>
+  :root { --bg: #eef0f3; --body: #2b2f36; --body2: #3a404a; --ink: #111; --muted: #6b7280; --accent: #2563eb; --err: #b91c1c; --ok: #15803d; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); font-family: system-ui, sans-serif; color: var(--ink); }
+  main { display: flex; flex-wrap: wrap; gap: 24px; padding: 20px 16px; justify-content: center; }
+  .calc { background: var(--body); border-radius: 28px; padding: 22px 22px 18px; box-shadow: 0 10px 30px #0004; width: min(100%, 700px); }
+  .brand { color: #cbd5e1; font-size: 13px; letter-spacing: .08em; margin: 0 0 10px 4px; }
+  .screenwrap { width: 100%; aspect-ratio: 318 / 212; background: #fff; border-radius: 6px; overflow: hidden; border: 3px solid #111; }
+  canvas { width: 100%; height: 100%; display: block; image-rendering: pixelated; outline: none; }
+  .keys { display: grid; grid-template-columns: repeat(6, 1fr); gap: 8px; margin-top: 14px; }
+  button { font: 600 13px system-ui; padding: 9px 6px; border-radius: 9px; border: 0; background: var(--body2); color: #f1f5f9; cursor: pointer; }
+  button:hover { background: #4b5361; }
+  button.run { background: var(--ok); }
+  .side { width: min(100%, 360px); }
+  .card { background: #fff; border-radius: 12px; padding: 14px 16px; margin-bottom: 14px; box-shadow: 0 1px 3px #0002; }
+  .card h2 { font-size: 15px; margin: 0 0 8px; }
+  .card p, .card li { font-size: 13px; line-height: 1.45; margin: 4px 0; }
+  #status { font-weight: 600; }
+  #info { font: 12px ui-monospace, monospace; white-space: pre-wrap; color: #374151; }
+  #log { font: 12px ui-monospace, monospace; white-space: pre-wrap; color: var(--err); }
+  label.file { display: inline-block; padding: 8px 12px; background: var(--accent); color: #fff; border-radius: 8px; cursor: pointer; font-size: 13px; font-weight: 600; }
+  label.file input { display: none; }
+</style>
+</head>
+<body>
+<main>
+  <section class="calc">
+    <p class="brand">SIMULATEUR NSPIRE CX · LUA</p>
+    <div class="screenwrap"><canvas id="cv" width="318" height="212" tabindex="0"></canvas></div>
+    <div class="keys">
+      <button data-ev="escapeKey">esc</button>
+      <button data-ev="arrowUp">▲</button>
+      <button data-ev="arrowDown">▼</button>
+      <button data-ev="backspaceKey">del</button>
+      <button data-ev="enterKey">enter</button>
+      <button class="run" id="reload">Relancer te1.lua</button>
+    </div>
+  </section>
+  <aside class="side">
+    <div class="card">
+      <h2>État</h2>
+      <p id="status">Chargement…</p>
+      <p>Script : <b id="pname">te1.lua</b></p>
+      <p>Clique sur l'écran puis tape au clavier : chiffres et lettres, Entrée, Retour arrière (del), Échap, flèches haut/bas.</p>
+    </div>
+    <div class="card">
+      <h2>Ouvrir un .tns ou un .lua</h2>
+      <p>Le <code>.tns</code> est déchiffré comme sur la calculatrice, puis le script qu'il contient est lancé.</p>
+      <label class="file">Ouvrir .tns / .lua<input type="file" id="file" accept=".tns,.lua"></label>
+      <div id="info"></div>
+    </div>
+    <div class="card">
+      <h2>Erreurs Lua</h2>
+      <div id="log">aucune</div>
+    </div>
+  </aside>
+</main>
+<script src="https://cdn.jsdelivr.net/npm/fengari-web@0.1.4/dist/fengari-web.js"></script>
+<script>
+const cv = document.getElementById("cv");
+const ctx = cv.getContext("2d");
+const logEl = document.getElementById("log");
+let fontPx = 11, needPaint = true, pen = 1, current = null;
+
+function setStatus(t, c) { const s = document.getElementById("status"); s.textContent = t; s.style.color = c || ""; }
+function logErr(t) { logEl.textContent = (logEl.textContent === "aucune" ? "" : logEl.textContent + "\n") + t; }
+
+// ---- API graphique appelee par le shim Lua ----
+window.__inval = () => { needPaint = true; };
+window.simLog = [];
+window.__simlog = (s) => { simLog.push(String(s)); };
+window.__gcw = (s) => ctx.measureText(String(s)).width;
+window.__gch = () => Math.round(fontPx * 1.15);
+window.__gc = (op, a, b, c, d, e, f) => {
+  ctx.lineWidth = pen;
+  switch (op) {
+    case "color": ctx.fillStyle = ctx.strokeStyle = `rgb(${a},${b},${c})`; break;
+    case "font": fontPx = Math.round(c * 1.2); ctx.font = `${b === "b" ? "bold " : ""}${fontPx}px Arial, sans-serif`; break;
+    case "pen": pen = a === "thick" ? 3 : a === "medium" ? 2 : 1; break;
+    case "fillRect": ctx.fillRect(a, b, c, d); break;
+    case "drawRect": ctx.strokeRect(a + .5, b + .5, c, d); break;
+    case "drawLine": ctx.beginPath(); ctx.moveTo(a + .5, b + .5); ctx.lineTo(c + .5, d + .5); ctx.stroke(); break;
+    case "drawArc": case "fillArc": {
+      ctx.beginPath();
+      if (op === "fillArc") ctx.moveTo(a + c / 2, b + d / 2);
+      ctx.ellipse(a + c / 2, b + d / 2, Math.max(c / 2, .1), Math.max(d / 2, .1), 0, -e * Math.PI / 180, -(e + f) * Math.PI / 180, f > 0);
+      op === "fillArc" ? ctx.fill() : ctx.stroke();
+      break;
+    }
+    case "drawString": {
+      ctx.textBaseline = { top: "top", middle: "middle", bottom: "bottom" }[d] || "alphabetic";
+      ctx.fillText(String(a), b, c);
+      break;
+    }
+  }
+};
+
+const SHIM = `
+js = require "js"
+local W = js.global
+platform = { apilevel = "2.0", window = {} }
+function platform.window:invalidate() W:__inval() end
+function platform.window:width() return 318 end
+function platform.window:height() return 212 end
+on = {}
+function __log(s) W:__simlog(s) end
+math.log10 = math.log10 or function(x) return math.log(x, 10) end
+math.eval = function(s)
+  local f = load("return " .. s)
+  if not f then error("syntaxe") end
+  return f()
+end
+local gc = {}
+function gc:setColorRGB(r, g, b) W:__gc("color", r, g, b) end
+function gc:setFont(f, s, z) W:__gc("font", f, s, z) end
+function gc:setPen(a, b) W:__gc("pen", a, b) end
+function gc:fillRect(x, y, w, h) W:__gc("fillRect", x, y, w, h) end
+function gc:drawRect(x, y, w, h) W:__gc("drawRect", x, y, w, h) end
+function gc:drawLine(a, b, c, d) W:__gc("drawLine", a, b, c, d) end
+function gc:drawArc(x, y, w, h, s, e) W:__gc("drawArc", x, y, w, h, s, e) end
+function gc:fillArc(x, y, w, h, s, e) W:__gc("fillArc", x, y, w, h, s, e) end
+function gc:drawString(s, x, y, al) W:__gc("drawString", s, x, y, al or "top") end
+function gc:getStringWidth(s) return W:__gcw(s) end
+function gc:getStringHeight(s) return W:__gch() end
+function __dispatch(ev, arg)
+  if ev == "paint" then
+    W:__gc("color", 0, 0, 0)
+    W:__gc("font", "sansserif", "r", 12)
+    W:__gc("pen", "thin", "smooth")
+    if on.paint then on.paint(gc) end
+  else
+    local f = on[ev]
+    if f then f(arg) end
+  end
+end
+`;
+
+function lua(code) {
+  const L = fengari.L;
+  const st = fengari.lauxlib.luaL_loadstring(L, fengari.to_luastring(code));
+  if (st !== 0) { throw new Error(fengari.to_jsstring(fengari.lua.lua_tostring(L, -1))); }
+  const r = fengari.lua.lua_pcall(L, 0, 0, 0);
+  if (r !== 0) {
+    const msg = fengari.to_jsstring(fengari.lua.lua_tostring(L, -1));
+    fengari.lua.lua_pop(L, 1);
+    throw new Error(msg);
+  }
+}
+
+function paint() {
+  needPaint = false;
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, 318, 212);
+  try { lua('__dispatch("paint")'); } catch (e) { logErr("paint: " + e.message); }
+}
+
+function fire(ev, arg) {
+  if (!current) return;
+  window.__arg = arg;
+  try { lua(arg === undefined ? `__dispatch("${ev}")` : `__dispatch("${ev}", js.global.__arg)`); }
+  catch (e) { logErr(ev + ": " + e.message); }
+  if (needPaint) paint();
+}
+
+function startScript(name, code) {
+  // nouvel etat Lua propre
+  fengari.L = fengari.lauxlib.luaL_newstate();
+  fengari.lualib.luaL_openlibs(fengari.L);
+  fengari.lauxlib.luaL_requiref(fengari.L, fengari.to_luastring("js"), fengari.interop.luaopen_js, 1);
+  fengari.lua.lua_pop(fengari.L, 1);
+  logEl.textContent = "aucune";
+  current = { name, code };
+  document.getElementById("pname").textContent = name;
+  try {
+    lua(SHIM);
+    lua(code);
+    fire("construction");
+    needPaint = true; paint();
+    setStatus("En cours : " + name, "var(--ok)");
+  } catch (e) {
+    logErr(e.message);
+    setStatus("Erreur au chargement du script", "var(--err)");
+  }
+  cv.focus();
+}
+
+async function loadDefault() {
+  const r = await fetch("/v/" + Date.now() + "/te1.lua", { cache: "no-store" });
+  startScript("te1.lua", await r.text());
+}
+
+document.getElementById("reload").onclick = loadDefault;
+document.querySelectorAll("[data-ev]").forEach(b => b.onclick = () => { fire(b.dataset.ev); cv.focus(); });
+cv.addEventListener("keydown", (e) => {
+  const map = { Enter: "enterKey", Escape: "escapeKey", Backspace: "backspaceKey", ArrowUp: "arrowUp", ArrowDown: "arrowDown", ArrowLeft: "arrowLeft", ArrowRight: "arrowRight" };
+  if (map[e.key]) { e.preventDefault(); fire(map[e.key]); }
+  else if (e.key.length === 1 && !e.ctrlKey) { e.preventDefault(); fire("charIn", e.key); }
+});
+cv.addEventListener("click", () => cv.focus());
+
+document.getElementById("file").addEventListener("change", async (ev) => {
+  const f = ev.target.files[0]; if (!f) return;
+  const info = document.getElementById("info");
+  if (f.name.toLowerCase().endsWith(".lua")) { startScript(f.name, await f.text()); }
+  else {
+    const r = await (await fetch("/tns", { method: "POST", body: await f.arrayBuffer() })).json();
+    info.textContent = r.infos.join("\n");
+    if (r.ok && r.lang === "lua") startScript(f.name + " (Lua)", r.code);
+    else if (r.ok && r.lang === "python") setStatus("Ce .tns contient du Python: il ne marche que sur CX II", "var(--err)");
+    else setStatus("Pas de script Lua dans ce .tns", "var(--err)");
+  }
+  ev.target.value = "";
+});
+
+// API pour tests automatiques
+window.simKey = fire;
+window.simType = (s) => { for (const ch of s) fire("charIn", ch); fire("enterKey"); };
+window.simOpenTns = async (url) => {
+  const buf = await (await fetch(url, { cache: "no-store" })).arrayBuffer();
+  const r = await (await fetch("/tns", { method: "POST", body: buf })).json();
+  document.getElementById("info").textContent = r.infos.join("\n");
+  if (r.lang === "lua") startScript(url.split("/").pop() + " (Lua)", r.code);
+  return r;
+};
+
+if (typeof fengari === "undefined") setStatus("fengari (Lua) n'a pas pu se charger", "var(--err)");
+else loadDefault();
+</script>
+</body>
+</html>
