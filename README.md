@@ -56,13 +56,27 @@ Il faut une TI-Nspire CX II avec l'OS 5.2 ou plus récent, pour avoir Python.
 
 Pour revenir au texte après un schéma, appuie sur n'importe quelle touche.
 
-## Tester sur PC
+## Simulateur (tester sans la calculatrice)
+
+Le dossier `simulateur/` contient une page qui imite l'écran de la TI-Nspire CX II : une console Python avec `input()`, les dessins `ti_draw` en couleur, `get_key` au clavier, et le chargement d'un `.tns` avec vérification de sa structure.
+
+```bash
+python simulateur/server.py
+```
+
+Ouvre ensuite http://localhost:8765/simulateur/ et appuie sur **Ctrl+R**. Le bouton « Ouvrir .py / .tns » charge un autre fichier.
+
+Le serveur est nécessaire : il envoie les en-têtes qui permettent à `input()` de bloquer comme sur la calculatrice. Python est chargé depuis le CDN de Pyodide, il faut donc une connexion Internet au premier lancement.
+
+Le simulateur exécute du CPython et non le MicroPython de la TI, et c'est lui qui vérifie le `.tns`, pas l'OS de TI. Il détecte la plupart des problèmes, mais pas tous.
+
+## Tester sur PC sans simulateur
 
 ```bash
 python te1.py
 ```
 
-Sur PC, les schémas s'affichent en texte, puisque `ti_draw` n'existe que sur la calculatrice.
+Dans ce cas, les schémas s'affichent en texte.
 
 ## Modifier le programme
 

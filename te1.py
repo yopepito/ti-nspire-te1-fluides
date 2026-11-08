@@ -160,7 +160,8 @@ def d_capil():
   c(ROUGE)
   txt(172, 38, "1 air (Patm)"); txt(172, 52, "2 sous menisque Hg")
   txt(172, 86, "3 / 4 menisque bas Hg"); txt(172, 112, "5 air")
-  txt(172, 132, "6 sous menisque eau"); txt(172, 170, "7 niveau du bac")
+  txt(172, 132, "6 sous menisque eau")
+  col(255, 255, 255); txt(180, 172, "7 niveau du bac")
   c(NOIR)
   D.draw_line(140, 40, 140, 80); txt(110, 64, "L")
   txt(4, 18, "Laplace a chaque menisque, rho*g*h dedans")
@@ -230,17 +231,23 @@ def d_ecoul():
 def d_serpentin():
   c(BLEU)
   ys = [30, 60, 90, 120, 150, 180]
+  D.set_pen("thick", "solid")
   for i in range(6):
     x0 = 40 if (i == 0 or i == 5) else 90
-    D.fill_rect(x0, ys[i] - 3, 200, 6)
+    D.fill_rect(x0, ys[i] - 3, 240 - x0, 6)
   for i in range(5):
     if i % 2 == 0:
       D.draw_arc(225, ys[i], 30, 30, 270, 180)
     else:
       D.draw_arc(75, ys[i], 30, 30, 90, 180)
+  D.set_pen("thin", "solid")
   D.fill_rect(37, 30, 6, 150)
   c(NOIR)
-  D.draw_circle(40, 105, 12); txt(4, 108, "pompe")
+  D.fill_circle(40, 105, 12)
+  col(255, 255, 255); D.fill_circle(40, 105, 9)
+  c(NOIR); D.draw_circle(40, 105, 12)
+  D.draw_line(34, 111, 40, 97); D.draw_line(40, 97, 46, 111)
+  txt(55, 109, "pompe")
   c(ROUGE)
   txt(25, 50, "1"); txt(150, 25, "2")
   txt(262, 108, "3"); txt(150, 198, "4"); txt(25, 172, "0")

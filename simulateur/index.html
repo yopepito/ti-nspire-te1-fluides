@@ -1,0 +1,311 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Simulateur TI-Nspire</title>
+<style>
+  :root {
+    --bg: #eef0f3; --body: #2b2f36; --body2: #3a404a; --screen: #f7f8f4;
+    --ink: #111; --muted: #6b7280; --accent: #2563eb; --err: #b91c1c; --ok: #15803d;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); font-family: system-ui, sans-serif; color: var(--ink); }
+  main { display: flex; flex-wrap: wrap; gap: 24px; padding: 20px 16px; justify-content: center; }
+  .calc { background: var(--body); border-radius: 28px; padding: 22px 22px 18px; box-shadow: 0 10px 30px #0004; width: min(100%, 700px); }
+  .brand { color: #cbd5e1; font-size: 13px; letter-spacing: .08em; margin: 0 0 10px 4px; }
+  .screenwrap { position: relative; width: 100%; aspect-ratio: 318 / 212; background: var(--screen); border-radius: 6px; overflow: hidden; border: 3px solid #111; }
+  canvas { position: absolute; inset: 0; width: 100%; height: 100%; image-rendering: pixelated; display: none; }
+  #console { position: absolute; inset: 0; padding: 6px 8px; font: 13px/1.3 ui-monospace, Consolas, monospace; white-space: pre-wrap; overflow-y: auto; }
+  #console .err { color: var(--err); }
+  #console .sys { color: var(--muted); }
+  .inrow { display: flex; gap: 8px; margin-top: 12px; }
+  #inp { flex: 1; font: 15px ui-monospace, Consolas, monospace; padding: 8px 10px; border-radius: 8px; border: 2px solid #555; background: #f9fafb; }
+  #inp:disabled { background: #9ca3af; }
+  #prompt { color: #e5e7eb; font: 13px ui-monospace, monospace; margin-top: 8px; min-height: 18px; }
+  .keys { display: grid; grid-template-columns: repeat(6, 1fr); gap: 8px; margin-top: 12px; }
+  button { font: 600 13px system-ui; padding: 9px 6px; border-radius: 9px; border: 0; background: var(--body2); color: #f1f5f9; cursor: pointer; }
+  button:hover { background: #4b5361; }
+  button.run { background: var(--ok); }
+  button.stop { background: var(--err); }
+  .side { width: min(100%, 360px); }
+  .card { background: #fff; border-radius: 12px; padding: 14px 16px; margin-bottom: 14px; box-shadow: 0 1px 3px #0002; }
+  .card h2 { font-size: 15px; margin: 0 0 8px; }
+  .card p, .card li { font-size: 13px; line-height: 1.45; margin: 4px 0; }
+  #status { font-weight: 600; }
+  #tnsinfo { font: 12px ui-monospace, monospace; white-space: pre-wrap; color: #374151; }
+  label.file { display: inline-block; padding: 8px 12px; background: var(--accent); color: #fff; border-radius: 8px; cursor: pointer; font-size: 13px; font-weight: 600; }
+  label.file input { display: none; }
+</style>
+</head>
+<body>
+<main>
+  <section class="calc">
+    <p class="brand">SIMULATEUR NSPIRE CX II · PYTHON</p>
+    <div class="screenwrap">
+      <div id="console"></div>
+      <canvas id="cv" width="318" height="212"></canvas>
+    </div>
+    <div id="prompt"></div>
+    <div class="inrow">
+      <input id="inp" placeholder="saisie (input)" disabled autocomplete="off">
+      <button id="send">enter</button>
+    </div>
+    <div class="keys">
+      <button data-k="esc">esc</button>
+      <button data-k="up">▲</button>
+      <button data-k="down">▼</button>
+      <button data-k="left">◀</button>
+      <button data-k="right">▶</button>
+      <button data-k="enter">touche</button>
+      <button class="run" id="run">Ctrl+R</button>
+      <button class="stop" id="stop">Arrêter</button>
+      <button id="cls">Effacer</button>
+      <button id="toCons">Console</button>
+      <button id="toGfx">Écran graph.</button>
+      <button id="reload">te1.py</button>
+    </div>
+  </section>
+  <aside class="side">
+    <div class="card">
+      <h2>État</h2>
+      <p id="status">Chargement de Python…</p>
+      <p>Programme : <b id="pname">te1.py</b></p>
+    </div>
+    <div class="card">
+      <h2>Charger un fichier</h2>
+      <p>Un <code>.py</code> se lance tel quel. Un <code>.tns</code> est ouvert comme sur la TI : le simulateur vérifie sa structure, puis lance le script qu'il contient.</p>
+      <label class="file">Ouvrir .py / .tns<input type="file" id="file" accept=".py,.tns"></label>
+      <div id="tnsinfo"></div>
+    </div>
+    <div class="card">
+      <h2>Différences avec la vraie TI</h2>
+      <ul>
+        <li>Python ici = CPython (Pyodide). La TI utilise MicroPython : une fonction rare peut manquer là-bas.</li>
+        <li>La vérification du .tns est faite par ce simulateur, pas par l'OS de TI.</li>
+        <li>Clavier : Entrée, Échap et les flèches fonctionnent comme les touches de la TI pendant un dessin.</li>
+      </ul>
+    </div>
+  </aside>
+</main>
+<script>
+const cons = document.getElementById("console");
+const cv = document.getElementById("cv");
+const ctx = cv.getContext("2d");
+const inp = document.getElementById("inp");
+const statusEl = document.getElementById("status");
+const promptEl = document.getElementById("prompt");
+const enc = new TextEncoder();
+
+let worker, sab, keySab, ctrl, data, keyCtrl, keyData;
+let current = { name: "te1.py", code: null };
+let running = false, waitingInput = false;
+let pen = 1;
+let readyPromise, readyResolve;
+
+function show(mode) {
+  cv.style.display = mode === "gfx" ? "block" : "none";
+  cons.style.display = mode === "gfx" ? "none" : "block";
+}
+function out(s, cls) {
+  const span = document.createElement("span");
+  if (cls) span.className = cls;
+  span.textContent = s + "\n";
+  cons.appendChild(span);
+  cons.scrollTop = cons.scrollHeight;
+}
+function setStatus(t, color) { statusEl.textContent = t; statusEl.style.color = color || ""; }
+
+function clearCanvas() { ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, 318, 212); ctx.fillStyle = ctx.strokeStyle = "#000"; }
+
+function draw(c) {
+  const [op, ...a] = c;
+  if (op === "cls") { cons.textContent = ""; return; }
+  show("gfx");
+  ctx.lineWidth = pen;
+  switch (op) {
+    case "clear": clearCanvas(); break;
+    case "clear_rect": { const f = ctx.fillStyle; ctx.fillStyle = "#fff"; ctx.fillRect(...a); ctx.fillStyle = f; break; }
+    case "color": ctx.fillStyle = ctx.strokeStyle = `rgb(${a[0]},${a[1]},${a[2]})`; break;
+    case "pen": pen = a[0] === "thick" ? 3 : a[0] === "medium" ? 2 : 1; break;
+    case "line": ctx.beginPath(); ctx.moveTo(a[0] + .5, a[1] + .5); ctx.lineTo(a[2] + .5, a[3] + .5); ctx.stroke(); break;
+    case "rect": ctx.strokeRect(a[0] + .5, a[1] + .5, a[2], a[3]); break;
+    case "frect": ctx.fillRect(a[0], a[1], a[2], a[3]); break;
+    case "circle": ctx.beginPath(); ctx.arc(a[0], a[1], a[2], 0, 2 * Math.PI); ctx.stroke(); break;
+    case "fcircle": ctx.beginPath(); ctx.arc(a[0], a[1], a[2], 0, 2 * Math.PI); ctx.fill(); break;
+    case "arc": case "farc": {
+      const [x, y, w, h, a0, da] = a;
+      ctx.beginPath();
+      if (op === "farc") ctx.moveTo(x + w / 2, y + h / 2);
+      ctx.ellipse(x + w / 2, y + h / 2, w / 2, h / 2, 0, -a0 * Math.PI / 180, -(a0 + da) * Math.PI / 180, da > 0);
+      op === "farc" ? ctx.fill() : ctx.stroke();
+      break;
+    }
+    case "text": ctx.font = "11px sans-serif"; ctx.textBaseline = "alphabetic"; ctx.fillText(a[2], a[0], a[1]); break;
+    case "poly": case "fpoly": {
+      const [xs, ys] = a; ctx.beginPath(); ctx.moveTo(xs[0], ys[0]);
+      for (let i = 1; i < xs.length; i++) ctx.lineTo(xs[i], ys[i]);
+      ctx.closePath(); op === "fpoly" ? ctx.fill() : ctx.stroke(); break;
+    }
+  }
+}
+
+function sendKey(k) {
+  if (!running) return;
+  const b = enc.encode(k);
+  keyData.set(b); Atomics.store(keyCtrl, 1, b.length);
+  Atomics.store(keyCtrl, 0, 1); Atomics.notify(keyCtrl, 0);
+}
+
+function sendInput() {
+  if (!waitingInput) return;
+  const b = enc.encode(inp.value);
+  data.set(b); Atomics.store(ctrl, 1, b.length);
+  inp.value = ""; inp.disabled = true; waitingInput = false; promptEl.textContent = "";
+  Atomics.store(ctrl, 0, 1); Atomics.notify(ctrl, 0);
+}
+
+function startWorker() {
+  if (worker) worker.terminate();
+  sab = new SharedArrayBuffer(16 + 8192);
+  keySab = new SharedArrayBuffer(8 + 64);
+  ctrl = new Int32Array(sab, 0, 4); data = new Uint8Array(sab, 16);
+  keyCtrl = new Int32Array(keySab, 0, 2); keyData = new Uint8Array(keySab, 8);
+  readyPromise = new Promise(r => readyResolve = r);
+  worker = new Worker("worker.js");
+  running = false; waitingInput = false; inp.disabled = true;
+  setStatus("Chargement de Python…");
+  worker.onmessage = (e) => {
+    const m = e.data;
+    if (m.type === "ready") { readyResolve(); if (!running) setStatus("Prêt : appuie sur Ctrl+R", "var(--ok)"); }
+    else if (m.type === "out") out(m.s);
+    else if (m.type === "err") out(m.s, "err");
+    else if (m.type === "draw") draw(m.cmd);
+    else if (m.type === "input") {
+      show("console");
+      waitingInput = true; inp.disabled = false; inp.focus();
+      promptEl.textContent = m.prompt;
+      out(m.prompt, "sys");
+      cons.lastChild.remove();
+    }
+    else if (m.type === "done") { running = false; setStatus(m.stopped ? "Arrêté" : "Programme terminé", m.stopped ? "" : "var(--ok)"); show("console"); }
+    else if (m.type === "error") { running = false; show("console"); out(m.s, "err"); setStatus("Erreur Python (voir l'écran)", "var(--err)"); }
+  };
+  worker.postMessage({ type: "init", sab, keySab });
+}
+
+async function run() {
+  if (!crossOriginIsolated) { setStatus("Page non isolée : lancer via server.py", "var(--err)"); return; }
+  if (running) stop();
+  if (current.code === null) await loadDefault();
+  cons.textContent = ""; clearCanvas(); show("console");
+  running = true; setStatus("Démarrage de Python…", "var(--accent)");
+  await readyPromise;
+  setStatus("En cours : " + current.name, "var(--accent)");
+  worker.postMessage({ type: "run", code: current.code, name: current.name });
+}
+
+function stop() {
+  if (!worker) return;
+  Atomics.store(ctrl, 2, 1); Atomics.store(ctrl, 0, 1); Atomics.notify(ctrl, 0);
+  startWorker();
+}
+
+async function loadDefault() {
+  const r = await fetch("/v/" + Date.now() + "/te1.py", { cache: "no-store" });
+  current = { name: "te1.py", code: await r.text() };
+  document.getElementById("pname").textContent = current.name;
+}
+
+// ---- lecture .tns (format TI: zip modifie) ----
+async function inflateRaw(bytes) {
+  const ds = new DecompressionStream("deflate-raw");
+  const s = new Blob([bytes]).stream().pipeThrough(ds);
+  return new Uint8Array(await new Response(s).arrayBuffer());
+}
+function crc32(buf) {
+  let c, crc = 0xFFFFFFFF;
+  for (let n = 0; n < buf.length; n++) {
+    c = (crc ^ buf[n]) & 0xFF;
+    for (let k = 0; k < 8; k++) c = c & 1 ? (c >>> 1) ^ 0xEDB88320 : c >>> 1;
+    crc = (crc >>> 8) ^ c;
+  }
+  return (crc ^ 0xFFFFFFFF) >>> 0;
+}
+async function readTns(buf) {
+  const b = new Uint8Array(buf), dv = new DataView(buf);
+  const lines = [];
+  const magic = new TextDecoder().decode(b.slice(0, 10));
+  lines.push("en-tete: " + magic + (magic.startsWith("*TIMLP") ? "  OK" : "  INVALIDE"));
+  let e = -1;
+  for (let i = b.length - 22; i >= 0; i--) if (b[i] === 0x54 && b[i+1] === 0x49 && b[i+2] === 0x50 && b[i+3] === 0x44) { e = i; break; }
+  if (e < 0) throw new Error("fin de repertoire TIPD introuvable");
+  const n = dv.getUint16(e + 10, true), off = dv.getUint32(e + 16, true);
+  let p = off, py = null;
+  for (let i = 0; i < n; i++) {
+    const method = dv.getUint16(p + 10, true), crc = dv.getUint32(p + 16, true);
+    const csz = dv.getUint32(p + 20, true), usz = dv.getUint32(p + 24, true);
+    const fl = dv.getUint16(p + 28, true), xl = dv.getUint16(p + 30, true), cl = dv.getUint16(p + 32, true);
+    const lo = dv.getUint32(p + 42, true);
+    const name = new TextDecoder().decode(b.slice(p + 46, p + 46 + fl));
+    const hdr = lo === 0 ? 10 : 4;
+    const lfl = dv.getUint16(lo + hdr + 22, true), lxl = dv.getUint16(lo + hdr + 24, true);
+    const start = lo + hdr + 26 + lfl + lxl;
+    const raw = b.slice(start, start + csz);
+    const plain = method === 8 ? await inflateRaw(raw) : raw;
+    const ok = crc32(plain) === crc && plain.length === usz;
+    lines.push(`${name}  methode ${method === 13 ? "TI chiffre" : method === 8 ? "deflate" : method}  ${usz} o  CRC ${ok ? "OK" : "FAUX"}`);
+    if (name.toLowerCase().endsWith(".py")) py = { name, code: new TextDecoder().decode(plain) };
+    p += 46 + fl + xl + cl;
+  }
+  const names = lines.join("\n");
+  lines.push(names.includes("Document.xml") && names.includes("Problem1.xml") ? "Document.xml + Problem1.xml presents" : "ATTENTION: Document.xml ou Problem1.xml manquant");
+  if (py && py.code.includes("\r")) lines.push("ATTENTION: fins de ligne CRLF dans le script");
+  return { info: lines.join("\n"), py };
+}
+
+document.getElementById("file").addEventListener("change", async (ev) => {
+  const f = ev.target.files[0]; if (!f) return;
+  const info = document.getElementById("tnsinfo");
+  info.textContent = "";
+  try {
+    if (f.name.toLowerCase().endsWith(".tns")) {
+      const r = await readTns(await f.arrayBuffer());
+      info.textContent = r.info;
+      if (!r.py) { setStatus("Aucun script Python dans ce .tns", "var(--err)"); return; }
+      current = { name: r.py.name, code: r.py.code };
+    } else {
+      current = { name: f.name, code: await f.text() };
+    }
+    document.getElementById("pname").textContent = current.name + " (" + f.name + ")";
+    setStatus("Fichier chargé : appuie sur Ctrl+R", "var(--ok)");
+  } catch (err) {
+    info.textContent = "Erreur de lecture: " + err.message;
+    setStatus(".tns illisible", "var(--err)");
+  }
+  ev.target.value = "";
+});
+
+document.getElementById("run").onclick = run;
+document.getElementById("stop").onclick = () => { stop(); setStatus("Arrêté"); };
+document.getElementById("cls").onclick = () => { cons.textContent = ""; };
+document.getElementById("toCons").onclick = () => show("console");
+document.getElementById("toGfx").onclick = () => show("gfx");
+document.getElementById("reload").onclick = async () => { await loadDefault(); setStatus("te1.py rechargé", "var(--ok)"); };
+document.getElementById("send").onclick = () => waitingInput ? sendInput() : sendKey("enter");
+inp.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); sendInput(); } });
+document.querySelectorAll("[data-k]").forEach(btn => btn.onclick = () => sendKey(btn.dataset.k));
+document.addEventListener("keydown", (e) => {
+  if (e.target === inp) return;
+  if (e.ctrlKey && (e.key === "r" || e.key === "R")) { e.preventDefault(); run(); return; }
+  const map = { Enter: "enter", Escape: "esc", ArrowUp: "up", ArrowDown: "down", ArrowLeft: "left", ArrowRight: "right", Backspace: "del", " ": "space" };
+  const k = map[e.key] || (e.key.length === 1 ? e.key : null);
+  if (k) { sendKey(k); if (map[e.key]) e.preventDefault(); }
+});
+
+clearCanvas();
+if (!crossOriginIsolated) setStatus("Page non isolée : lancer via server.py", "var(--err)");
+else { startWorker(); loadDefault(); }
+</script>
+</body>
+</html>
