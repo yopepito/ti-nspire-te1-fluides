@@ -58,21 +58,24 @@ def build(py_path, out_path, tiversion=0x0500):
         (b"Problem1.xml", 0x0D, prob, prob),
         (name, 8, raw_deflate(src), src),
     ]
+    # date DOS que minizip calcule pour une date "vide": jour 0, mois 1, an 1980
+    DOSDATE = 0x00200000
     out = bytearray()
     central = bytearray()
     for idx, (fn, method, stored, plain) in enumerate(entries):
         offset = len(out)
         crc = zlib.crc32(plain) & 0xFFFFFFFF
+        internal_fa = 1 if method == 8 else 0  # zlib marque le script comme texte
         if idx == 0:
             out += b"*TIMLP" + ("%04X" % tiversion).encode()
         else:
             out += struct.pack("<I", 0x04034B50)
-        out += struct.pack("<HHHIIIIHH", 20, 0, method, 0, crc,
+        out += struct.pack("<HHHIIIIHH", 20, 0, method, DOSDATE, crc,
                            len(stored), len(plain), len(fn), 0)
         out += fn + stored
         central += struct.pack("<IHHHHIIIIHHHHHII", 0x02014B50, 0, 20, 0, method,
-                               0, crc, len(stored), len(plain), len(fn),
-                               0, 0, 0, 0, 0, offset) + fn
+                               DOSDATE, crc, len(stored), len(plain), len(fn),
+                               0, 0, 0, internal_fa, 0, offset) + fn
     cd_off = len(out)
     out += central
     out += struct.pack("<IHHHHIIH", 0x44504954, 0, 0, len(entries), len(entries),
