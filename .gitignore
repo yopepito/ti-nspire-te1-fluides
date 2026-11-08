@@ -1,2 +1,4 @@
 __pycache__/
 *.pyc
+# figures tirees des enonces/corriges du cours: restent en local
+figures/
