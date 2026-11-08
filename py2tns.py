@@ -49,6 +49,8 @@ def build(py_path, out_path, tiversion=0x0500):
     src = open(py_path, "rb").read()
     if src.startswith(b"\xef\xbb\xbf"):
         src = src[3:]
+    # la TI attend des fins de ligne LF uniquement
+    src = src.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
     prob = TIEN_HEADER + doccrypt(raw_deflate(PY_HEADER + name + PY_FOOTER))
     # (nom, methode, donnees stockees, crc/taille sur donnees non compressees)
     entries = [
